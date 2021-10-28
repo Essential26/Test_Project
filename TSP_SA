@@ -1,0 +1,176 @@
+using Random
+using StatsBase
+
+using BenchmarkTools
+
+function readData()
+	c = Array{Int, 2}(undef, 0, 0)
+	d = Array{Int, 2}(undef, 0, 0)
+	number_of_aerodromes = 0
+	starting_aerodrome = 0
+	arriving_aerodrome = 0
+	aerodromes_must_visit = 0
+	number_of_regions = 0
+	region_of_aerodrome = Array{Int64}(undef, 0)
+	radius = 0
+
+	if isfile("./instances/instance_50_1.txt")
+		myFile = open("./instances/instance_50_1.txt")
+		data = readlines(myFile)
+		n = length(data)-10
+		c = fill(0,(n,2))
+		d = fill(0,(n,n))
+		y = 0
+		i = 0
+		j = 0
+		for line in data
+			y = y + 1
+			arr = split(line, " ")
+
+			if y == 1
+				number_of_aerodromes = parse(Int, arr[1])
+			elseif y == 2
+				starting_aerodrome = parse(Int, arr[1])
+			elseif y == 3
+				arriving_aerodrome = parse(Int, arr[1])
+			elseif y == 4
+				aerodromes_must_visit = parse(Int, arr[1])
+			elseif y == 5
+				number_of_regions = parse(Int, arr[1])
+			elseif y == 7
+				for x in 1:n
+					push!(region_of_aerodrome,parse(Int, arr[x]))
+				end
+			elseif y == 9
+				radius = parse(Int, arr[1])
+			elseif y > 10
+				for x in 1:2
+					c[y-10,x] = parse(Int, arr[x])
+				end
+			end
+
+		end
+
+		for i in 1:n
+			for j in 1:n
+				d[i,j]=round(sqrt((c[i,2]-c[j,2])*(c[i,2]-c[j,2])+(c[i,1]-c[j,1])*(c[i,1]-c[j,1])))
+			end
+		end
+
+		close(myFile)
+	end
+
+	return d,starting_aerodrome,arriving_aerodrome,radius,aerodromes_must_visit,region_of_aerodrome,number_of_regions
+end
+#Records the initial value of region_of_aerodrome for restoration after region_of_aerodrome changes.
+function initial(a::Array{Int, 1})
+    b = Int[]
+    n = length(a)
+    for i in 1:n
+        push!(b,a[i])
+    end
+    return b
+end
+
+function solve_TSP(d::Array{Int, 2},starting_aerodrome::Int64,arriving_aerodrome::Int64,radius::Int64,aerodromes_must_visit::Int64,region_of_aerodrome::Array{Int, 1},number_of_regions::Int64)
+
+    n = size(d, 1)
+    println("n: ", n)
+	
+	global path_best=[] #Current best path
+	global T=6000 #Initial temperature
+	global delta_T=0.99 #Cooling factor for number of cycles
+	global dist=0.0 #Current path length
+	global dist_best=0.0 #Current optimal path length
+	global flag = 1 #Used to indicate whether the inter-path is larger than the radius
+	global p=Array{Int64}(undef, 0)
+	global r=initial(region_of_aerodrome) #Record the initial value of region_of_aerodrome for restoration after the region_of_aerodrome is changed
+	#Cooling cycle process
+	while(T>1e-10||flag==1)
+		#Perturbation that randomly generates a path through all regions with a number between aerodromes_must_visit and the number of all airfields, with starting_aerodrome at the head and driving_aerodrome at the tail.
+		while(true)
+			region_of_aerodrome=initial(r) #Restore the initial value of region_of_aerodrome at the beginning of each loop.
+			p=Array{Int64}(undef, 0)
+			push!(p,starting_aerodrome) #Get an array of only starting_aerodrome
+			global N=rand(aerodromes_must_visit:n) 
+			#Generate a random array, remove starting_aerodrome and driving_aerodrome from it, add driving_aerodrome to the end of it, and then merge the two arrays to get an array with starting_aerodrome at the beginning and driving_aerodrome at the end. aerodrome.
+			global q=sample(1:n,N,replace=false)
+			deleteat!(q,q.==starting_aerodrome)
+			deleteat!(q,q.==arriving_aerodrome)
+			push!(q,arriving_aerodrome)
+			append!(p,q)
+			#Calculate current path length.
+			global path_best
+			for i=1:N-1
+				dist= dist+d[p[i],p[i+1]]
+			end
+			dist_best=dist
+			#For each passing airfield, let region_of_aerodrome corresponding value of all regions = 0.
+			for i=1:size(p,1)
+				region_of_aerodrome[region_of_aerodrome.==region_of_aerodrome[p[i]]] .=0
+			end
+			#When the sum of regions_of_aerodrome is 0, a path through all regions is obtained.
+			if(sum(region_of_aerodrome[i] for i in 1:n)==0)
+				break
+			end
+
+		end
+		#Then, we get a randomly generated path through all regions with a number between aerodromes_must_visit and the number of all airfields, with starting_aerodrome at the head and driving_aerodrome at the tail.
+
+		flag=0
+		#By the current path order in each path node after traversing the path node until you get a path node with a distance less than or equal to the radius, if the traversal is still not, then cool down, and then exit to while(T>1e-10||flag==1) for the next cycle
+		for i=1:N-2
+			for j=i+1:N
+				if(j==N)
+					flag=1
+					break
+				end
+				if(d[p[i],p[j]] <= radius)
+					z=p[j]
+					p[j]=p[i+1]
+					p[i+1]=z					
+					break
+				end
+			end
+		
+			if(flag==1)
+				break
+			end
+		
+		end
+		
+		if(flag==1||d[p[N-1],p[N]]>radius)
+			flag=1
+			T=T*delta_T
+			continue
+		end
+		
+		dist=0
+		for i=1:N-1
+			dist=dist+d[p[i],p[i+1]]
+		end
+		#The Metropolis law calculates the current probability and chooses whether to update or not, preferring to accept new states with larger energy differences from the current state at high temperatures, and to accept new states with smaller energy differences from the current state at low temperatures. This avoids local traps (local optima) as much as possible.
+		if(dist<dist_best)
+			dist_best=dist
+			path_best=p
+		else()
+			a=exp(-(dist-dist_best)/T) #exp(x)=e的x次幂  
+			b=rand(); 
+			if(a>b)  #is used when the probability is greater than the random number in the interval [0,1). (Metropolis rule).
+				dist_best=dist
+				path_best=p  
+			end
+		end
+		T=T*delta_T
+
+	end
+	
+	println("dist: ",dist_best)
+	println("path: ",path_best)
+	
+end
+
+d,starting_aerodrome,arriving_aerodrome,radius,aerodromes_must_visit,region_of_aerodrome,number_of_regions=readData()
+println("starting_aerodrome= ",starting_aerodrome," "," arriving_aerodrome= ",arriving_aerodrome,"  radius= ",radius," aerodromes_must_visit= ",aerodromes_must_visit," number_of_regions= ",number_of_regions)
+@benchmark solve_TSP(d,starting_aerodrome,arriving_aerodrome,radius,aerodromes_must_visit,region_of_aerodrome,number_of_regions)
+
