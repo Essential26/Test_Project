@@ -1,3 +1,4 @@
+#简略思路
 import cv2,sys
 faceClassifier=cv2.CascadeClassifier('haarcascade_frontalface_default.xml') # the HAAR cascade file, which contains the machine learned data for face detection
 objImage=cv2.imread(sys.argv[1]) # use cv2 to load image file
